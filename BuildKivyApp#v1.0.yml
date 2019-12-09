@@ -1,0 +1,442 @@
+name: Kivy Application Packager
+
+# on: push
+
+jobs:
+  Build_Kivy_App_Android:
+    runs-on: ubuntu-18.04
+    steps:
+    
+    # get the sources to build 
+    - name: 'Checkout the sources to local folder githubsources'
+      uses:  actions/checkout@v2-beta
+      with:
+        # Here we clone the github repo
+        path: 'githubsources'
+        fetch-depth: 1
+
+    - name: 'lets parse the settings'
+      uses: zweitag/github-actions/global-variables@master
+      with:
+        file: 'githubsources/custombuildscripts/settings.txt'
+
+ 
+    - name: 'Stop if we do not want to build this OS release'
+      if: env.BUILD_ANDROID=='0'
+      run: exit 1
+
+    # We download the Build Repo (to have the scipts and buildozer snapshot)
+    - name: 'Download KivyActionsBuild Repo (Git Clone)'
+      run: git clone https://github.com/thica/KivyGitActionsBuild
+
+
+    # we do not install python that way, as it breaks the build process
+    # I have no clue where it is installed to
+    # - name: 'Install Python 3.7.5'
+    #   uses: actions/setup-python@v1
+    #   with:
+    #     python-version: 3.7.5
+    
+    # We need Python3 the default interpreter, as eg: buildozer expect python 3 under /usr/bin/python
+    # but the runner have python 2 installed there 
+    - name: 'Make Python3 the default'
+      working-directory: /usr/bin
+      run: sudo mv /usr/bin/python /usr/bin/python2org && 
+           sudo ln -s python3 python
+
+    - name: 'Install some Helpers (tree)'
+      run: sudo apt install tree
+
+    - name: 'Install some Helpers (rpl)'
+      run: sudo apt install rpl
+
+
+    # some steps to install buildozer
+    # Installing by pip does not work properly  
+
+    - name: 'Buildozer: Install dependencies (the undocumented ones)'
+      run: pip3 install setuptools
+
+    - name: 'Buildozer: unzip snapshot'
+      run: |
+            7z x "KivyGitActionsBuild/snapshots/buildozer.zip"
+            mv "buildozer-master" "buildozer"
+
+
+    # - name: 'verify 1'
+    #   working-directory: "$HOME"
+    #   run: echo "$HOME"
+      
+    # - name: 'verify 2'
+    #   # working-directory: $HOME/buildozer
+    #   run: ls /home -R $PWD/* 
+
+    - name: 'Buildozer: Install'
+      working-directory: "buildozer"
+      run: |
+            python setup.py build
+            sudo pip install -e .
+            echo "::add-path::/home/runner/.local/bin"
+
+
+    - name: 'Install dependencies #1 (update)'
+      run: 
+        # sudo apt update
+        ls
+
+    # some of the dependencies should be in the runner image, but it doesn't cost time to 
+    # request to install them again, as apt will skip it, if allready there
+    - name: 'Install dependencies #2 (cmake, openjdk, ...)'
+      run: sudo apt install -y git zip unzip openjdk-8-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 python3-venv cmake
+
+    # same as last step
+    - name: 'Install dependencies #3 (cython,virtualenv, ..)'
+      run: pip3 install --user --upgrade cython==0.29.10 virtualenv
+
+    #to bypass some _ctype build errors
+    - name: 'Install dependencies #4 (the undocumented ones)'
+      run: sudo apt-get install libffi-dev
+
+    # - name: 'Install GStreamer (if Required)'
+    #  if: env.USE_GSTREAMER=='1'
+    #  run: 
+
+    # This folder we use as the working folder for buildozer
+    - name: 'Create target folder (the buildozer build folder)'
+      run: mkdir buildsources
+
+    # we look to find a custom prepare sources script in  githubsources/custombuildscripts/android/prepare_sources.sh
+    # if yes, this will be executed, and it should place the final sources in buildsources
+    # if not custom script is available, the it will just copy the githunbsources to the buildsources
+    - name: 'Prepare/Copy sources (Make the script excutable)'
+      run: chmod +x KivyGitActionsBuild/scripts/android/prepare_sources.sh
+
+    - name: 'Prepare/Copy sources (Run the script)'
+      run: sh KivyGitActionsBuild/scripts/android/prepare_sources.sh
+ 
+    - name: 'Copy buildozer.spec file to target folder (root)'
+      run: cp githubsources/custombuildscripts/buildozer.spec buildsources/buildozer.spec
+
+    # - name: 'Adjust spec file'
+    #  run: export MYHOME=$(pwd) &&
+    #       rpl HOME "$MYHOME" buildsources/buildozer.spec 
+
+    # - name: Cache App Buildozer Folder
+    #  id: cache-App-Buildozer
+    #  uses: actions/cache@v1
+    #  with:
+    #    path: buildsources/.buildozer
+    #    key: ${{ runner.os }}-App-Buildozer
+
+    # - name: Cache SDK Buildozer Folder
+    #   id: cache-SDK-Buildozer
+    #   uses: actions/cache@v1
+    #   with:
+    #     path: .buildozer
+    #     key: ${{ runner.os }}-SDK-Buildozer
+
+
+    # we do download the sdk manually
+    # buildozer is buggy
+    # the preinstalled in the runner needs sudo
+    # buildozer doesn't work with sudo
+    
+    # - name: 'Download Android SDK'
+    #  run: mkdir android-sdk &&
+    #       cd android-sdk &&
+    #       wget http://dl.google.com/android/repository/sdk-tools-linux-4333796.zip &&
+    #       unzip -q sdk-tools-linux-4333796.zip &&
+    #       rm sdk-tools-linux-4333796.zip &&
+    #       cd ..
+
+    # - name: 'Check Install Android Build Tools after failed build (this should be done by buildozer, but the bug has not been removed)'
+    #  run: yes | android-sdk/tools/bin/sdkmanager "build-tools;29.0.2"
+
+    - name: 'Run Buildozer First Time (this will fail (buildozer bug), but shown as succeed)'
+      #if: steps.cache-App-Buildozer.outputs.cache-hit != 'true'
+      working-directory: "buildsources"
+      run: buildozer -v android "$ANDROID_RELEASE"
+      continue-on-error: True
+
+    - name: 'Create Keystore'
+      run: | 
+             export P4A_RELEASE_KEYSTORE="$PWD/release-key.keystore"
+             export P4A_RELEASE_KEYSTORE_PASSWD=${{ env.secrets.P4A_RELEASE_KEYSTORE_PASSWD }}
+             export P4A_RELEASE_KEYALIAS_PASSWD=${{ env.secrets.P4A_RELEASE_KEYALIAS_PASSWD }}
+             export P4A_RELEASE_KEYALIAS=androidreleasekey
+
+    - name: 'Create Keystore #2'
+      run: | 
+             export P4A_RELEASE_KEYSTORE="$PWD/release-key.keystore"
+             export P4A_RELEASE_KEYSTORE_PASSWD=mypasswort
+             export P4A_RELEASE_KEYALIAS_PASSWD=mypasswort
+             export P4A_RELEASE_KEYALIAS=androidreleasekey
+             keytool -genkey -v -keystore "$P4A_RELEASE_KEYSTORE" -alias "$P4A_RELEASE_KEYALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$P4A_RELEASE_KEYSTORE_PASSWD" -keypass "$P4A_RELEASE_KEYALIAS_PASSWD" -dname "CN=$ANDROID_KEYSTORE_CN, OU=$ANDROID_KEYSTORE_OU, O=$ANDROID_KEYSTORE_O, L=$ANDROID_KEYSTORE_L, S=$ANDROID_KEYSTORE_S, C=$ANDROID_KEYSTORE_C"
+
+
+     # Buildozer installs ths SDK to /home/runner^
+    - name: 'Install Android Build Tools after failed build (this should be done by buildozer, but the bug has not been removed)'
+      #if: steps.cache-SDK-Buildozer.outputs.cache-hit != 'true'
+      run: yes | /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager "build-tools;29.0.2"
+
+    - name: 'Remove the old buildozer app build folder'
+      #if: steps.cache-App-Buildozer.outputs.cache-hit != 'true'
+      working-directory: buildsources
+      run: rm -r -f .buildozer
+
+    - name: 'Run buildozer second time (this should work)'
+      working-directory: buildsources
+      run: buildozer -v android "$ANDROID_RELEASE"
+
+    # we have some troubles to pass the found apk as a variable to the upload routine 
+    # so we rename it to a stiic filename
+    - name: 'Store output filename'
+      run: | 
+             export BUILD_APK=$(find buildsources/bin/ -type f -name "*.apk")
+             export
+             echo "Found filename $BUILD_APK"
+             mv "$BUILD_APK" "buildsources/bin/KivyApp_Android.apk"
+
+    - name: 'Adjust/rename binary (Run the script)'
+      run: sh KivyGitActionsBuild/scripts/android/prepare_bin.sh
+
+    - name: 'Upload Binary'
+      if: env.UPLOAD_AS_ARTIFACT=='1'
+      uses: actions/upload-artifact@v1
+      with:
+        name: KivyAndroidApp
+        # path: ${{env.BUILD_APK}}
+        path: "buildsources/bin/KivyApp_Android.apk"
+
+
+  Build_Kivy_App_Windows:
+    runs-on: windows-latest
+    steps:
+
+    # get the sources to build 
+    - name: 'Checkout the sources to local folder githubsources'
+      uses:  actions/checkout@v2-beta
+      with:
+        # Here we clone the github repo
+        path: 'githubsources'
+        fetch-depth: 1
+
+    # lets parse the settings
+    - uses: zweitag/github-actions/global-variables@master
+      with:
+        file: 'githubsources/custombuildscripts/settings.txt'
+    
+    - name: 'Stop if we do not want to build this OS release'
+      if: env.BUILD_WINDOWS=='0'
+      run: exit 1
+
+    - name: 'Install Python 3.7.5'
+      uses: actions/setup-python@v1
+      with:
+        python-version: 3.7.5
+
+    - name: 'Check Python version'
+      run: python -V
+
+
+    - name: 'Install Kivy Dependencies #1'
+      run: pip3 install --upgrade pip wheel setuptools virtualenv
+
+    - name: 'Install Kivy Dependencies #2'
+      run: pip3 install docutils pygments pypiwin32 kivy_deps.sdl2==0.1.* kivy_deps.glew==0.1.*
+
+    - name: 'Install Kivy'
+      run: pip3 install kivy==1.11.1
+
+    - name: 'Install GStreamer (if Required)'
+      if: env.USE_GSTREAMER=='1'
+      run: pip3 install kivy_deps.gstreamer==0.1.*
+
+
+    # - name: 'Install further undocumented dependencires'
+    #  run: | 
+    #          set READTHEDOCS=True
+    #          pip3 install picamera
+
+    # We download the Build Repo (to have the scipts and buildozer snapshot)
+    - name: 'Download KivyActionsBuild Repo (Git Clone)'
+      run: git clone https://github.com/thica/KivyGitActionsBuild
+
+
+    - name: 'Install pyinstaller'
+      run:  pip3 install pyinstaller
+
+    # This folder we use as the working folder for pyinstaller
+    - name: 'Create target folder (the pyinstaller build folder)'
+      run: mkdir "buildsources"
+
+
+    # we look to find a custom prepare sources script in  githubsources/custombuildscripts/android/prepare_sources.sh
+    # if yes, this will be executed, and it should place the final sources in buildsources
+    # if not custom script is available, the it will just copy the githunbsources to the buildsources
+    - name: 'Prepare/Copy sources'
+      run: KivyGitActionsBuild\\scripts\\windows\\prepare_sources.cmd
+ 
+      
+    - name: 'Copy windows.spec file to target folder (root)'
+      run: copy githubsources\\custombuildscripts\\windows.spec buildsources\\windows.spec
+
+    - name: 'Create default spec'
+      working-directory: "buildsources"
+      run: | 
+            python -m PyInstaller --name myapp main.py
+            cmd /k dir /S/B/W
+
+    - name: 'Upload SpecFile'
+      uses: actions/upload-artifact@v1
+      with:
+        name: pyinstaller spec files
+        path: "buildsources\\myapp.spec"
+
+
+    - name: 'Run PyInstaller'
+      working-directory: buildsources
+      run: python -m PyInstaller --name KivyAppAndroid windows.spec
+
+    - name: 'Upload SpecFile'
+      uses: actions/upload-artifact@v1
+      with:
+        name: pyinstaller spec files
+        path: "buildsources\\myapp.exe"
+
+
+  Build_Kivy_App_OSX:
+    runs-on: macos-latest
+      
+    steps:
+
+    # get the sources to build 
+    - name: 'Checkout the sources to local folder githubsources'
+      uses:  actions/checkout@v2-beta
+      with:
+        # Here we clone the github repo
+        path: 'githubsources'
+        fetch-depth: 1
+
+    # lets parse the settings
+    - uses: zweitag/github-actions/global-variables@master
+      with:
+        file: 'githubsources/custombuildscripts/settings.txt'
+    
+    - name: 'Stop if we do not want to build this OS release'
+      if: env.BUILD_OSX=='0'
+      run: exit 1
+
+    # First we Download the repo (to have the scipts and buildozer snapshot)
+    - name: 'Download KivyActionsBuild Repo (Git Clone)'
+      run: git clone https://github.com/thica/KivyGitActionsBuild
+
+    # We need homebrew
+    - name: 'Install Homebrew'
+      run: /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+
+    - name: 'Install Python 3'
+      run: brew install python
+
+    - name: 'Install Cython'
+      run: pip3 install Cython==0.29.10
+
+    - name: 'Install Kivy'
+      run: pip3 install -U kivy
+      
+
+    - name: 'Install buildozer'
+      run: pip3 install git+http://github.com/kivy/buildozer
+
+
+    # This folder we use as the working folder for buildozer
+    - name: 'Create target folder (the buildozer build folder)'
+      run: mkdir buildsources
+
+    # we look to find a custom prepare sources script in  githubsources/custombuildscripts/android/prepare_sources.sh
+    # if yes, this will be executed, and it should place the final sources in buildsources
+    # if not custom script is available, the it will just copy the githunbsources to the buildsources
+    - name: 'Prepare/Copy sources'
+      run: chmod +x KivyGitActionsBuild/scripts/osx/prepare_sources.sh
+           KivyGitActionsBuild/scripts/osx/prepare_sources.sh
+
+    - name: 'Copy buildozer.spec file to target folder (root)'
+      run: cp githubsources/custombuildscripts/buildozer.spec buildsources/buildozer.spec
+
+
+    - name: 'Run Buildozer'
+      #if: steps.cache-App-Buildozer.outputs.cache-hit != 'true'
+      working-directory: "buildsources"
+      run: buildozer -v  "$OSX_RELEASE"
+
+    # we have some troubles to pass the found APP as a variable to the upload routine 
+    # so we rename it to a stiic filename
+    - name: 'Store output filename'
+      run: | 
+             export BUILD_APP=$(find buildsources/bin/ -type f -name "*.APP")
+             export
+             echo "Found filename $BUILD_APP"
+             mv "$BUILD_APK" "buildsources/bin/KivyApp_OSX.APP"
+
+    - name: 'Adjust/rename binary (Run the script)'
+      run: sh KivyGitActionsBuild/scripts/OSX/prepare_bin.sh
+
+    - name: 'Upload Binary'
+      if: env.UPLOAD_AS_ARTIFACT=='1'
+      uses: actions/upload-artifact@v1
+      with:
+        name: KivyAndroidApp
+        # path: ${{env.BUILD_APK}}
+        path: "buildsources/bin/KivyApp_OSX.APP"
+
+
+
+  Build_Kivy_App_IOS:
+    runs-on: macos-latest
+      
+    steps:
+
+    # get the sources to build 
+    - name: 'Checkout the sources to local folder githubsources'
+      uses:  actions/checkout@v2-beta
+      with:
+        # Here we clone the github repo
+        path: 'githubsources'
+        fetch-depth: 1
+
+    # lets parse the settings
+    - uses: zweitag/github-actions/global-variables@master
+      with:
+        file: 'githubsources/custombuildscripts/settings.txt'
+    
+    - name: 'Stop if we do not want to build this OS release'
+      if: env.BUILD_IOS=='0'
+      run: exit 1
+
+    # We Download the repo (to have the scipts and buildozer snapshot)
+    - name: 'Download KivyActionsBuild Repo (Git Clone)'
+      run: git clone https://github.com/thica/KivyGitActionsBuild
+
+    - name: 'Install Homebrew'
+      run: /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+    - name: 'Install dependencies #1'
+      run: brew install autoconf automake libtool pkg-config
+
+    - name: 'Install dependencies #2'
+      run: brew link libtool
+
+    - name: 'Install dependencies #3'
+      run: sudo easy_install pip
+
+    - name: 'Install dependencies #4'
+      run: sudo pip install Cython==0.29.10
+
+    - name: 'Clone Kivy'
+      run: git clone git://github.com/kivy/kivy-ios
+
+    - name: 'Build Kivy'
+      run: cd kivy-ios && ./toolchain.py build kivy
+
+

@@ -1,0 +1,137 @@
+name: Kivy Android Application
+
+# on: push
+
+jobs:
+  Build_Kivy_App:
+    runs-on: ubuntu-18.04
+    steps:
+    # First we Download the repo (to have the scipts and buildozer snapshot)
+    - name: 'Download KivyActionsBuild Repo (Git Clone)'
+      run: 
+        git clone https://github.com/thica/KivyGitActionsBuild
+
+    # - name: 'Install Python 3.7.5'
+    #  uses: actions/setup-python@v1
+    #  with:
+    #    python-version: 3.7.5
+
+    # We need Python3 the default interpreter, as eg: buildozer expect python 3 under /usr/bin/python
+    # but the runner have python 2 installed there 
+    - name: 'Make Python3 the default #1'
+      working-directory: /usr/bin
+      run:
+        sudo mv /usr/bin/python /usr/bin/python2org && sudo ln -s python3 python
+
+    - name: 'Buildozer: Install dependencies (the undocumented ones)'
+      run: 
+        pip3 install setuptools
+
+
+    # Four steps to install buildozer
+    # Installing by pip does not work properly  
+    - name: 'Buildozer: create folder'
+      run: 
+        # git clone https://github.com/kivy/buildozer
+        mkdir buildozer
+
+
+    - name: 'Buildozer: test'
+      working-directory: ./buildozer
+      run: 
+        ls -R ./
+
+    # Four steps to install buildozer
+    # Installing by pip does not work properly  
+    - name: 'Buildozer: unzip snapshot'
+      working-directory: ./buildozer
+      run: 
+        # git clone https://github.com/kivy/buildozer
+        7z x KivyGitActionsBuild/snapshots/buildozer.zip
+
+
+    - name: 'Buildozer: Install (Setup/Build)'
+      working-directory: ./buildozer
+      run:
+        python setup.py build
+
+    - name: 'Buildozer: Install (Pip Install)'
+      working-directory: ./buildozer
+      run: 
+        sudo pip install -e .
+
+    - name: 'Buildozer: Install (Add Path)'
+      run:
+        echo "::add-path::/home/runner/.local/bin"
+
+    - name: 'Install dependencies #1 (update)'
+      run: 
+        # sudo apt update
+        ls
+
+    # some of the dependencies should be in the runner image, but it doesn't cost time to 
+    # request to install them again, as apt will skip it, if allready there
+    - name: 'Install dependencies #2 (cmake, openjdk, ...)'
+      run: 
+        sudo apt install -y git zip unzip openjdk-8-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 python3-venv cmake
+
+    # same as last step
+    # ToDo:specify cython version
+    - name: 'Install dependencies #3 (cython,virtualenv, ..)'
+      run: 
+        pip3 install --user --upgrade cython virtualenv
+
+    #to bypass some _ctype build errors
+    - name: 'Install dependencies #4 (the undocumented ones)'
+      run: 
+        sudo apt-get install libffi-dev
+
+    # get the sources to build 
+    - name: 'Checkout the sources to local folder githubsources'
+      uses:  actions/checkout@v2-beta
+      with:
+        # Here we clone the github repo
+        path: 'githubsources'
+        fetch-depth: 1
+
+    # This folder we use as the working folder for buildozer
+    - name: 'Create target folder (the buildozer build folder)'
+      run:
+        mkdir "buildsources"
+
+    - name: 'Copy github sources to target folder'
+      run:
+        cp -R githubsources/. buildsources
+
+    - name: 'Copy buildozer.spec file to target folder (root)'
+      run:
+        cp $GITHUB_WORKSPACE/githubsources/custombuildscripts/buildozer.spec $GITHUB_WORKSPACE/buildsources/buildozer.spec
+
+    # - name: Cache App Buildozer Folder
+    #   id: cache-App-Buildozer
+    #   uses: actions/cache@v1
+    #   with:
+    #     path: buildsources/.buildozer
+    #     key: ${{ runner.os }}-App-Buildozer
+
+
+    - name: 'Run Buildozer First Time (this will fail (buildozer bug), but shown ass succeed)'
+      # if: steps.cache-App-Buildozer.outputs.cache-hit != 'true'
+      working-directory: ./buildsources
+      run: 
+        buildozer -v android debug
+      continue-on-error: True
+      
+    - name: 'Install Android Build Tools after failed build (this should be done by buildozer, but the bug has not been removed)'
+      # if: steps.cache-App-Buildozer.outputs.cache-hit != 'true'
+      working-directory: ./buildsources
+      run: yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager "build-tools;29.0.2"
+
+    - name: 'Remove the old buildozer app build folder'
+      working-directory: ./buildsources
+      run: rm -r -f .buildozer
+
+    - name: 'Run buildozer second time (this should work)'
+      working-directory: ./buildsources
+      run:
+        buildozer -v android debug

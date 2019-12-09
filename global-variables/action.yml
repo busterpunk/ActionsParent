@@ -24,6 +24,8 @@ inputs:
 #   using: 'node12'
 #   main: 'index.js'
 
+run: ls
+
 jobs:
   TestTrigger:
     runs-on: ubuntu-18.04

@@ -24,7 +24,7 @@ inputs:
 #   using: 'node12'
 #   main: 'index.js'
 
-run: ls
+runs: ls
 
 jobs:
   TestTrigger:

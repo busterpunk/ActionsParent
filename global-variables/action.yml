@@ -20,9 +20,19 @@ inputs:
     description: 'file with global vars'
     required: false
     default: '.github/workflows/.env.global'
-runs:
-  using: 'node12'
-  main: 'index.js'
+# runs:
+#   using: 'node12'
+#   main: 'index.js'
+
+jobs:
+  TestTrigger:
+    runs-on: ubuntu-18.04
+    steps:
+    
+    - name: 'do something'
+      run: ls
+ 
+
 branding:
   icon: 'settings'
   color: 'green'
